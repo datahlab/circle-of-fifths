@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Circle of Fifths · Guitar & Bass</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <p class="eyebrow">Fretboard reference</p>
+        <h1>Circle of Fifths</h1>
+        <p class="lede">
+          Pick a key, then read it on the neck. Colors on the first neck match the circle.
+          The second neck maps every note of the scale. The third maps a diatonic arpeggio.
+          The bottom shows a chord shape for each triad in the key.
+        </p>
+      </div>
+      <div class="controls">
+        <div class="control-block">
+          <span class="control-label" id="instrument-label">Instrument</span>
+          <div class="seg-control" role="group" aria-labelledby="instrument-label">
+            <button type="button" data-action="instrument" data-value="guitar" aria-pressed="true">Guitar</button>
+            <button type="button" data-action="instrument" data-value="bass" aria-pressed="false">Bass</button>
+          </div>
+        </div>
+        <div class="control-block" id="string-control" hidden>
+          <span class="control-label" id="strings-label">Bass strings</span>
+          <div class="seg-control" role="group" aria-labelledby="strings-label">
+            <button type="button" data-action="strings" data-value="4" aria-pressed="true">4-string</button>
+            <button type="button" data-action="strings" data-value="5" aria-pressed="false">5-string</button>
+            <button type="button" data-action="strings" data-value="6" aria-pressed="false">6-string</button>
+          </div>
+          <p class="control-hint" id="string-hint"></p>
+        </div>
+        <div class="control-block">
+          <span class="control-label" id="order-label">Neck view</span>
+          <div class="seg-control" role="group" aria-labelledby="order-label">
+            <button type="button" data-action="flip" data-value="low" aria-pressed="false">Low string on top</button>
+            <button type="button" data-action="flip" data-value="high" aria-pressed="true">High string on top</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="circle-card">
+          <div id="circle"></div>
+          <p class="circle-hint">The selected key moves to the top. Clockwise is a fifth up. Grey keys are outside the selected key.</p>
+        </div>
+        <div id="key-panel" aria-live="polite"></div>
+      </section>
+      <section id="chromatic-section"></section>
+      <section id="scale-section"></section>
+      <section id="arp-section"></section>
+      <section id="chord-section"></section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        Standard tuning. Guitar E2 A2 D3 G3 B3 E4. Four-string bass E1 A1 D2 G2.
+        Five-string bass adds a low B0. Six-string bass adds B0 and a high C3.
+        Fret 12 is the octave of the open string. Click a note, scale, or chord to hear it
+        as a plucked guitar or bass.
+      </p>
+    </footer>
+    <noscript>This reference needs JavaScript to draw the circle and the necks.</noscript>
+    <script type="module" src="js/app.js?v=12"></script>
+  </body>
+</html>
