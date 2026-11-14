@@ -11,21 +11,77 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,560;9..144,650&family=Outfit:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/styles.css?v=20" />
   </head>
   <body>
+    <nav class="app-tabs" aria-label="Sections">
+      <div class="app-tabs-bar">
+        <div role="tablist">
+          <button type="button" role="tab" id="tab-circle" data-action="tab" data-value="circle" aria-selected="true" aria-controls="view-circle">Circle of Fifths</button>
+          <button type="button" role="tab" id="tab-fretboard" data-action="tab" data-value="fretboard" aria-selected="false" aria-controls="view-fretboard">Fretboard</button>
+          <button type="button" role="tab" id="tab-metronome" data-action="tab" data-value="metronome" aria-selected="false" aria-controls="view-metronome">Metronome</button>
+        </div>
+        <div class="lang-switch" id="lang-switch" role="group" aria-label="Language">
+          <button type="button" data-action="lang" data-value="en" aria-pressed="true" aria-label="English">
+            <svg viewBox="0 0 38 20" aria-hidden="true">
+              <rect width="38" height="20" fill="#fff"/>
+              <g fill="#b22234">
+                <rect width="38" height="1.54"/>
+                <rect y="3.08" width="38" height="1.54"/>
+                <rect y="6.16" width="38" height="1.54"/>
+                <rect y="9.24" width="38" height="1.54"/>
+                <rect y="12.32" width="38" height="1.54"/>
+                <rect y="15.4" width="38" height="1.54"/>
+                <rect y="18.46" width="38" height="1.54"/>
+              </g>
+              <rect width="15.2" height="10.77" fill="#3c3b6e"/>
+              <g fill="#fff">
+                <circle cx="2.2" cy="1.7" r="0.55"/>
+                <circle cx="5.2" cy="1.7" r="0.55"/>
+                <circle cx="8.2" cy="1.7" r="0.55"/>
+                <circle cx="11.2" cy="1.7" r="0.55"/>
+                <circle cx="3.7" cy="3.5" r="0.55"/>
+                <circle cx="6.7" cy="3.5" r="0.55"/>
+                <circle cx="9.7" cy="3.5" r="0.55"/>
+                <circle cx="12.7" cy="3.5" r="0.55"/>
+                <circle cx="2.2" cy="5.3" r="0.55"/>
+                <circle cx="5.2" cy="5.3" r="0.55"/>
+                <circle cx="8.2" cy="5.3" r="0.55"/>
+                <circle cx="11.2" cy="5.3" r="0.55"/>
+                <circle cx="3.7" cy="7.1" r="0.55"/>
+                <circle cx="6.7" cy="7.1" r="0.55"/>
+                <circle cx="9.7" cy="7.1" r="0.55"/>
+                <circle cx="12.7" cy="7.1" r="0.55"/>
+                <circle cx="2.2" cy="8.9" r="0.55"/>
+                <circle cx="5.2" cy="8.9" r="0.55"/>
+                <circle cx="8.2" cy="8.9" r="0.55"/>
+                <circle cx="11.2" cy="8.9" r="0.55"/>
+              </g>
+            </svg>
+          </button>
+          <button type="button" data-action="lang" data-value="pt" aria-pressed="false" aria-label="Português">
+            <svg viewBox="0 0 20 14" aria-hidden="true">
+              <rect width="20" height="14" fill="#009c3b"/>
+              <polygon points="10,1.15 18.7,7 10,12.85 1.3,7" fill="#ffdf00"/>
+              <circle cx="10" cy="7" r="3.15" fill="#002776"/>
+              <path d="M7.15 7.7c1.7-1.15 4.1-1.2 5.7-.25" fill="none" stroke="#fff" stroke-width="0.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </nav>
     <header class="topbar">
       <div class="brand">
-        <p class="eyebrow">Fretboard reference</p>
-        <h1>Circle of Fifths</h1>
-        <p class="lede">
+        <p class="eyebrow" id="page-eyebrow">Fretboard reference</p>
+        <h1 id="page-title">Circle of Fifths</h1>
+        <p class="lede" id="page-lede">
           Pick a key, then read it on the neck. Colors on the first neck match the circle.
           The second neck maps every note of the scale. The third maps a diatonic arpeggio.
           The bottom shows a chord shape for each triad in the key.
         </p>
       </div>
       <div class="controls">
-        <div class="control-block">
+        <div class="control-block" id="instrument-block">
           <span class="control-label" id="instrument-label">Instrument</span>
           <div class="seg-control" role="group" aria-labelledby="instrument-label">
             <button type="button" data-action="instrument" data-value="guitar" aria-pressed="true">Guitar</button>
@@ -41,7 +97,7 @@
           </div>
           <p class="control-hint" id="string-hint"></p>
         </div>
-        <div class="control-block">
+        <div class="control-block" id="flip-control">
           <span class="control-label" id="order-label">Neck view</span>
           <div class="seg-control" role="group" aria-labelledby="order-label">
             <button type="button" data-action="flip" data-value="low" aria-pressed="false">Low string on top</button>
@@ -51,11 +107,11 @@
       </div>
     </header>
 
-    <main>
+    <main id="view-circle" role="tabpanel" aria-labelledby="tab-circle">
       <section class="hero">
         <div class="circle-card">
           <div id="circle"></div>
-          <p class="circle-hint">The selected key moves to the top. Clockwise is a fifth up. Grey keys are outside the selected key.</p>
+          <p class="circle-hint" id="circle-hint">The selected key moves to the top. Clockwise is a fifth up. Grey keys are outside the selected key.</p>
         </div>
         <div id="key-panel" aria-live="polite"></div>
       </section>
@@ -64,16 +120,18 @@
       <section id="arp-section"></section>
       <section id="chord-section"></section>
     </main>
+    <div id="view-fretboard" class="view" role="tabpanel" aria-labelledby="tab-fretboard" hidden></div>
+    <div id="view-metronome" class="view" role="tabpanel" aria-labelledby="tab-metronome" hidden></div>
 
     <footer class="site-footer">
-      <p>
+      <p id="site-footer-copy">
         Standard tuning. Guitar E2 A2 D3 G3 B3 E4. Four-string bass E1 A1 D2 G2.
         Five-string bass adds a low B0. Six-string bass adds B0 and a high C3.
         Fret 12 is the octave of the open string. Click a note, scale, or chord to hear it
-        as a plucked guitar or bass.
+        as a plucked guitar or bass. Fretboard walks the circle in fourths. Metronome keeps time from 40 to 208 BPM.
       </p>
     </footer>
-    <noscript>This reference needs JavaScript to draw the circle and the necks.</noscript>
-    <script type="module" src="js/app.js?v=12"></script>
+    <noscript>This reference needs JavaScript to draw the circle and the necks. Esta referência precisa de JavaScript para desenhar o círculo e os braços.</noscript>
+    <script type="module" src="js/app.js?v=23"></script>
   </body>
 </html>

@@ -1,30 +1,34 @@
 import {
+  BASS_FRET_COUNT,
   CIRCLE,
   DEGREE_COLOR,
   FRET_COUNT,
-  INLAY_FRETS,
   SCALE_GROUPS,
   SCALES,
   arpeggioFor,
   chordSteps,
-  chordVoicing,
+  chordVoicings,
   colorForPc,
   gaugeFor,
   getKeyContext,
   inlaySpans,
   ink,
+  isInlay,
   instrumentSpec,
   nameForPitchClass,
   orderedStrings,
   playbackRoot,
   soundingName,
   spelledOctave,
-} from "./theory.js";
+} from "./theory.js?v=23";
+import { drawCircle, spoken } from "./circle.js?v=22";
 import { createPlayer } from "./sound.js";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
+import { mountFretboard } from "./fretboard.js?v=22";
+import { mountMetronome } from "./metronome.js?v=22";
+import { getLang, onLang, setLang, t } from "./i18n.js?v=23";
 
 const state = {
+  view: "circle",
   instrument: "guitar",
   bassStrings: 4,
   index: 0,
@@ -47,12 +51,26 @@ const arpSection = document.querySelector("#arp-section");
 const chordSection = document.querySelector("#chord-section");
 const stringControl = document.querySelector("#string-control");
 const stringHint = document.querySelector("#string-hint");
+const fretboard = mountFretboard({
+  root: document.querySelector("#view-fretboard"),
+  getState: () => state,
+  playNote: (midi) => player.play([midi], "note", state.instrument),
+});
+const metronome = mountMetronome(document.querySelector("#view-metronome"));
 
 document.addEventListener("click", (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const { action, value, index, quality } = target.dataset;
 
+  if (action === "tab") {
+    setTab(value);
+    return;
+  }
+  if (action === "lang") {
+    setLang(value);
+    return;
+  }
   if (action === "instrument") {
     state.instrument = value;
     render();
@@ -169,6 +187,7 @@ function render() {
   renderScale(ctx);
   renderArpeggio(ctx);
   renderChords(ctx);
+  fretboard.sync();
   if (pendingFocus) {
     pendingFocus = false;
     circleMount
@@ -192,156 +211,192 @@ function syncControls() {
   if (state.instrument === "bass") {
     const hints = {
       4: "E1 · A1 · D2 · G2",
-      5: "Adds a low B0 under the E string.",
-      6: "Adds a low B0 and a high C3.",
+      5: t("hint.5"),
+      6: t("hint.6"),
     };
     stringHint.textContent = hints[state.bassStrings];
   }
+  applyChrome();
+}
+
+function applyStaticCopy() {
+  document.title = t("docTitle");
+  document.querySelector(".app-tabs").setAttribute("aria-label", t("nav.sections"));
+  document.querySelector("#tab-circle").textContent = t("tab.circle");
+  document.querySelector("#tab-fretboard").textContent = t("tab.fretboard");
+  document.querySelector("#tab-metronome").textContent = t("tab.metronome");
+  document.querySelector("#lang-switch").setAttribute("aria-label", t("lang.group"));
+  document.querySelectorAll("[data-action='lang']").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.value === getLang()));
+  });
+  document.querySelector("#instrument-label").textContent = t("ctrl.instrument");
+  document.querySelector("[data-action='instrument'][data-value='guitar']").textContent = t("instrument.guitar");
+  document.querySelector("[data-action='instrument'][data-value='bass']").textContent = t("instrument.bass");
+  document.querySelector("#strings-label").textContent = t("ctrl.strings");
+  document.querySelector("[data-action='strings'][data-value='4']").textContent = t("strings.4");
+  document.querySelector("[data-action='strings'][data-value='5']").textContent = t("strings.5");
+  document.querySelector("[data-action='strings'][data-value='6']").textContent = t("strings.6");
+  document.querySelector("#order-label").textContent = t("ctrl.order");
+  document.querySelector("[data-action='flip'][data-value='low']").textContent = t("order.low");
+  document.querySelector("[data-action='flip'][data-value='high']").textContent = t("order.high");
+  document.querySelector("#circle-hint").textContent = t("circle.hint");
+  document.querySelector("#site-footer-copy").textContent = t("footer");
+}
+
+function keyTitle(ctx) {
+  return `${ctx.rootName} ${t(ctx.quality === "major" ? "quality.major" : "quality.minor")}`;
+}
+
+function relativeTitle(ctx) {
+  return `${ctx.relativeRoot} ${t(ctx.relativeQuality === "major" ? "quality.major" : "quality.minor")}`;
+}
+
+function signatureText(ctx) {
+  if (ctx.count === 0) return t("sig.none");
+  const word = ctx.accidental === "sharp"
+    ? t(ctx.count === 1 ? "sig.sharp" : "sig.sharps")
+    : t(ctx.count === 1 ? "sig.flat" : "sig.flats");
+  return `${ctx.count} ${word}`;
+}
+
+function onInstrument(spec) {
+  if (spec.id === "guitar") return t("instrument.onGuitar");
+  return t("instrument.onBass", { n: spec.id.replace("bass", "") });
+}
+
+function neckFretCount() {
+  return state.instrument === "bass" ? BASS_FRET_COUNT : FRET_COUNT;
+}
+
+function instrumentLine(spec) {
+  if (spec.id === "guitar") return { label: t("instrument.guitar"), detail: t("tuning.standard") };
+  const n = spec.id.replace("bass", "");
+  const detail = n === "4" ? t("tuning.bass") : n === "5" ? t("tuning.bass5") : t("tuning.bass6");
+  return { label: t("instrument.bassN", { n }), detail };
+}
+
+function scaleLabel(scale) {
+  return t(`scale.${scale.id}`);
+}
+
+function scaleHeading(ctx) {
+  const name = scaleLabel(ctx.scale);
+  if (!ctx.scale.aka) return `${ctx.rootName} ${name}`;
+  return `${ctx.rootName} ${name} (${t(`aka.${ctx.scale.aka}`)})`;
+}
+
+function formatSteps(pattern) {
+  return pattern.map((step) => {
+    const key = `step.${step}`;
+    const value = t(key);
+    return value === key ? step : value;
+  }).join(" · ");
+}
+
+function placeName(fret) {
+  return fret === 0 ? t("place.open") : t("place.fret", { fret });
+}
+
+function describeShape(voicing) {
+  const stringShape = voicing.name.match(/^([A-G])-string shape$/);
+  const letterShape = voicing.name.match(/^([A-G]) shape$/);
+  const letter = (stringShape || letterShape)?.[1] ?? "";
+  const shape = stringShape ? t("shape.string", { letter }) : t("shape.letter", { letter });
+  if (voicing.min === 0) return t("shape.open", { shape });
+  if (voicing.barre) return t("shape.barre", { shape, fret: voicing.min });
+  return t("shape.start", { shape, fret: voicing.min });
+}
+
+function applyChrome() {
+  const view = state.view;
+  document.querySelectorAll("[data-action='tab']").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.value === view));
+  });
+  document.querySelector("#view-circle").hidden = view !== "circle";
+  document.querySelector("#view-fretboard").hidden = view !== "fretboard";
+  document.querySelector("#view-metronome").hidden = view !== "metronome";
+  document.querySelector("#flip-control").hidden = view !== "circle";
+  document.querySelector("#instrument-block").hidden = view === "metronome";
+  if (view === "metronome") stringControl.hidden = true;
+  applyStaticCopy();
+  document.querySelector("#page-eyebrow").textContent = t(`page.${view}.eyebrow`);
+  document.querySelector("#page-title").textContent = t(`page.${view}.title`);
+  document.querySelector("#page-lede").textContent = t(`page.${view}.lede`);
+}
+
+function setTab(view) {
+  if (!["circle", "fretboard", "metronome"].includes(view) || view === state.view) return;
+  if (view !== "fretboard") fretboard.pause();
+  if (view !== "metronome") metronome.stop();
+  state.view = view;
+  applyChrome();
+  if (view === "fretboard") fretboard.sync();
 }
 
 function renderCircle(ctx) {
-  const size = 640;
-  const cx = 320;
-  const cy = 320;
-  const outerR = 300;
-  const splitR = 196;
-  const innerR = 108;
-  const svg = svgEl("svg", {
-    viewBox: `0 0 ${size} ${size}`,
-    role: "group",
-    "aria-label": `Circle of fifths. ${ctx.title} selected. Outer ring majors, inner ring relative minors.`,
+  drawCircle(circleMount, {
+    index: state.index,
+    quality: state.quality,
+    enharmonicFlat: state.enharmonicFlat,
+    activePcs: ctx.keyPcs,
+    colorForPc,
+    hub: {
+      root: ctx.rootName,
+      quality: t(ctx.quality === "major" ? "quality.major" : "quality.minor"),
+      signature: ctx.count === 0 ? t("sig.natural") : ctx.signatureCompact,
+    },
+    label: t("circle.label", { title: keyTitle(ctx) }),
   });
-
-  CIRCLE.forEach((entry, index) => {
-    const [a0, a1] = segmentAngles(index);
-    const majorColor = colorForPc(entry.majorPc);
-    const minorColor = colorForPc(entry.minorPc);
-    const majorInKey = ctx.keyPcs.has(entry.majorPc);
-    const minorInKey = ctx.keyPcs.has(entry.minorPc);
-
-    svg.append(
-      segmentPath(cx, cy, splitR, outerR, a0, a1, {
-        index,
-        quality: "major",
-        color: majorColor,
-        inKey: majorInKey,
-        selected: state.index === index && state.quality === "major",
-        label: spoken(`${entry.major} major`),
-      }),
-    );
-    svg.append(
-      segmentPath(cx, cy, innerR, splitR, a0, a1, {
-        index,
-        quality: "minor",
-        color: minorColor,
-        inKey: minorInKey,
-        selected: state.index === index && state.quality === "minor",
-        label: spoken(`${entry.minor.slice(0, -1)} minor`),
-      }),
-    );
-
-    appendLabel(svg, cx, cy, (outerR + splitR) / 2, (a0 + a1) / 2, entry, "major", majorColor, majorInKey);
-    appendLabel(svg, cx, cy, (splitR + innerR) / 2, (a0 + a1) / 2, entry, "minor", minorColor, minorInKey);
-  });
-
-  CIRCLE.forEach((entry, index) => {
-    const [a0, a1] = segmentAngles(index);
-    if (state.index === index && state.quality === "major") {
-      svg.append(ringPath(cx, cy, splitR, outerR, a0, a1));
-    }
-    if (state.index === index && state.quality === "minor") {
-      svg.append(ringPath(cx, cy, innerR, splitR, a0, a1));
-    }
-  });
-
-  svg.append(svgEl("circle", { cx, cy, r: innerR - 6, class: "hub" }));
-  svg.append(hubText(cx, cy - 16, ctx.rootName, "hub-root"));
-  svg.append(hubText(cx, cy + 22, ctx.qualityName, "hub-quality"));
-  svg.append(hubText(cx, cy + 48, ctx.signatureCompact, "hub-sig"));
-
-  circleMount.replaceChildren(svg);
-}
-
-function appendLabel(svg, cx, cy, radius, angle, entry, quality, color, inKey) {
-  const pairs = quality === "major"
-    ? entry.altMajor
-      ? [entry.major, entry.altMajor]
-      : [entry.major]
-    : entry.altMinor
-      ? [entry.minor, entry.altMinor]
-      : [entry.minor];
-  const primaryIsAlt = Boolean(state.enharmonicFlat && entry.altMajor);
-  const labels = pairs.length === 2 && primaryIsAlt ? [pairs[1], pairs[0]] : pairs;
-  const fill = inKey ? ink(color) : "#f6f1e7";
-
-  if (labels.length === 1) {
-    svg.append(wedgeLabel(cx, cy, radius, angle, labels[0], fill, inKey, false));
-    return;
-  }
-
-  svg.append(wedgeLabel(cx, cy, radius + 12, angle, labels[0], fill, inKey, false));
-  svg.append(wedgeLabel(cx, cy, radius - 14, angle, labels[1], fill, inKey, true));
-}
-
-function wedgeLabel(cx, cy, radius, angle, value, fill, inKey, alt) {
-  const [x, y] = polar(cx, cy, radius, angle);
-  const text = svgEl("text", {
-    x: x.toFixed(2),
-    y: y.toFixed(2),
-    class: `seg-label${alt ? " alt" : ""}${inKey ? "" : " dim"}`,
-    fill,
-    "aria-hidden": "true",
-  });
-  text.textContent = value;
-  return text;
 }
 
 function renderKeyPanel(ctx) {
+  const title = keyTitle(ctx);
+  const relative = relativeTitle(ctx);
   const relativeBlurb = ctx.quality === "major"
-    ? `${ctx.relativeTitle} uses the same notes, with the root on ${ctx.relativeRoot}.`
-    : `${ctx.relativeTitle} uses the same notes. This key moves the root to ${ctx.rootName}.`;
+    ? t("key.relativeMajor", { relative, root: ctx.relativeRoot })
+    : t("key.relativeMinor", { relative, root: ctx.rootName });
 
   const accidentalLine = ctx.accidentals.length
     ? ctx.accidentals.map((name) => `<span class="acc">${name}</span>`).join("")
-    : `<span class="acc quiet">None</span>`;
+    : `<span class="acc quiet">${t("sig.noneMark")}</span>`;
 
-  const noteChips = ctx.keyNotes.map((note) => chip(note.name, colorForPc(note.pc), note.pc === ctx.rootPc, note.degree === "R" ? "Root" : note.degree)).join("");
+  const noteChips = ctx.keyNotes.map((note) => chip(note.name, colorForPc(note.pc), note.pc === ctx.rootPc, note.degree === "R" ? t("degree.root") : note.degree)).join("");
   const chordChips = ctx.chords.map((chord) => {
     const color = colorForPc(chord.pc);
-    return `<button type="button" class="chord" data-action="chord" data-pc="${chord.pc}" data-quality="${chord.quality}" style="--c:${color};--ink:${ink(color)}" aria-label="Play ${spoken(chord.symbol)}, ${chord.roman}">
+    return `<button type="button" class="chord" data-action="chord" data-pc="${chord.pc}" data-quality="${chord.quality}" style="--c:${color};--ink:${ink(color)}" aria-label="${t("key.playChord", { symbol: spoken(chord.symbol), roman: chord.roman })}">
       <span class="rn">${chord.roman}</span>
       <span class="sym">${chord.symbol}</span>
     </button>`;
   }).join("");
 
   const enharmonic = ctx.hasEnharmonic
-    ? `<button type="button" class="text-btn" data-action="enharmonic">${ctx.enharmonicFlat ? "Show as F♯ / D♯ minor" : "Show as G♭ / E♭ minor"}</button>`
+    ? `<button type="button" class="text-btn" data-action="enharmonic">${ctx.enharmonicFlat ? t("key.showSharp") : t("key.showFlat")}</button>`
     : "";
 
   keyPanel.innerHTML = `
     <article class="panel key-card">
       <header class="key-head">
-        <p class="eyebrow">Selected key</p>
-        <h2>${ctx.title}</h2>
+        <p class="eyebrow">${t("key.selected")}</p>
+        <h2>${title}</h2>
         <p class="key-blurb">${relativeBlurb}</p>
-        <button type="button" class="text-btn" data-action="relative">Switch to ${ctx.relativeTitle}</button>
+        <button type="button" class="text-btn" data-action="relative">${t("key.switch", { title: relative })}</button>
         ${enharmonic}
       </header>
       <div class="facts">
         <div>
-          <h3>Key signature</h3>
-          <p>${ctx.signatureLabel}</p>
+          <h3>${t("key.signature")}</h3>
+          <p>${signatureText(ctx)}</p>
           <div class="acc-row">${accidentalLine}</div>
         </div>
         <div>
-          <h3>Notes in the key</h3>
-          <p>Root, plus every note that belongs to ${ctx.title}.</p>
+          <h3>${t("key.notes")}</h3>
+          <p>${t("key.notesBlurb", { title })}</p>
           <div class="chip-row">${noteChips}</div>
         </div>
       </div>
       <div>
-        <h3>Diatonic chords</h3>
-        <p class="fine">Click a chord to hear it.</p>
+        <h3>${t("key.chords")}</h3>
+        <p class="fine">${t("key.chordsBlurb")}</p>
         <div class="chord-row">${chordChips}</div>
       </div>
     </article>
@@ -350,30 +405,37 @@ function renderKeyPanel(ctx) {
 
 function renderChromatic(ctx) {
   const spec = instrumentSpec(state);
+  const named = instrumentLine(spec);
   const strings = orderedStrings(state);
+  const title = keyTitle(ctx);
   chromaticSection.innerHTML = `
     <header class="section-head">
       <div>
-        <p class="eyebrow">Full neck</p>
-        <h2>All notes in ${ctx.title}</h2>
-        <p>${spec.label}, ${spec.detail}. ${tuningLine(strings)}. ${state.lowOnTop ? "Low string on top, as you look at the neck while playing." : "High string on top."}</p>
+        <p class="eyebrow">${t("neck.full")}</p>
+        <h2>${t("neck.all", { title })}</h2>
+        <p>${t("neck.summary", {
+          label: named.label,
+          detail: named.detail,
+          tuning: tuningLine(strings),
+          order: state.lowOnTop ? t("order.lowLong") : t("order.highLong"),
+        })}</p>
       </div>
       <button type="button" class="pill neck-toggle" data-action="hide-outside" aria-pressed="${state.hideOutsideKey}">
-        ${state.hideOutsideKey ? "Show notes outside the key" : "Hide notes outside the key"}
+        ${state.hideOutsideKey ? t("neck.show") : t("neck.hide")}
       </button>
     </header>
     <div class="legend">
-      <span><i class="swatch root" style="--c:${ctx.color}"></i> Root ${ctx.rootName}</span>
-      <span><i class="swatch" style="--c:${colorForPc(ctx.keyNotes[1].pc)}"></i> Other notes in the key</span>
-      ${state.hideOutsideKey ? "" : `<span><i class="swatch out" style="--c:${colorForPc((ctx.rootPc + 1) % 12)}"></i> Outside the key</span>`}
+      <span><i class="swatch root" style="--c:${ctx.color}"></i> ${t("neck.root", { name: ctx.rootName })}</span>
+      <span><i class="swatch" style="--c:${colorForPc(ctx.keyNotes[1].pc)}"></i> ${t("neck.other")}</span>
+      ${state.hideOutsideKey ? "" : `<span><i class="swatch out" style="--c:${colorForPc((ctx.rootPc + 1) % 12)}"></i> ${t("neck.outside")}</span>`}
     </div>
     <p class="fine">${state.hideOutsideKey
-      ? `Only the root and the other notes of ${ctx.title} are shown.`
-      : `Every pitch keeps the color it has on the circle. Bright notes are the root and the rest of ${ctx.title}.`}</p>
+      ? t("neck.only", { title })
+      : t("neck.colors", { title })}</p>
     ${neckMarkup({
       neck: "chromatic",
       strings,
-      fretCount: FRET_COUNT,
+      fretCount: neckFretCount(),
       cell(pc, string, fret) {
         const name = nameForPitchClass(pc, ctx.keyNotes, ctx.preferFlats);
         const inKey = ctx.keyPcs.has(pc);
@@ -382,14 +444,15 @@ function renderChromatic(ctx) {
         const midi = string.midi + fret;
         const octave = spelledOctave(midi, name);
         const simple = soundingName(pc, ctx.preferFlats);
-        const sounds = simple !== name ? ` Sounds as ${simple}.` : "";
-        const place = fret === 0 ? "open" : `fret ${fret}`;
+        const sounds = simple !== name ? t("note.sounds", { name: spoken(simple) }) : "";
+        const place = placeName(fret);
+        const extra = `${inKey ? t("note.inKey") : ""}${isRoot ? t("note.root") : ""}${sounds}`;
         return {
           show: inKey || !state.hideOutsideKey,
           className: `bubble ${inKey ? "in" : "out"}${isRoot ? " root" : ""}`,
           color,
           label: isRoot ? `<span class="deg">R</span><span class="nm">${name}</span>` : `<span class="nm">${name}</span>`,
-          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-in-key="${inKey}" data-root="${isRoot}" data-name="${name}" aria-label="${spoken(name)}${octave}, ${string.label} string, ${place}.${inKey ? " In the key." : ""}${isRoot ? " Root." : ""}${sounds}"`,
+          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-in-key="${inKey}" data-root="${isRoot}" data-name="${name}" aria-label="${t("note.aria", { name: spoken(name), octave, string: string.label, place, extra })}"`,
         };
       },
     })}
@@ -402,10 +465,10 @@ function renderScale(ctx) {
   const groups = SCALE_GROUPS.map((group) => {
     const pills = SCALES.filter((scale) => scale.group === group).map((scale) => {
       const pressed = scale.id === ctx.scale.id;
-      const aka = scale.aka && scale.aka !== "ascending" ? ` title="${scale.aka}"` : "";
-      return `<button type="button" class="pill" data-action="scale" data-value="${scale.id}" aria-pressed="${pressed}"${aka}>${scale.name}</button>`;
+      const aka = scale.aka && scale.aka !== "ascending" ? ` title="${t(`aka.${scale.aka}`)}"` : "";
+      return `<button type="button" class="pill" data-action="scale" data-value="${scale.id}" aria-pressed="${pressed}"${aka}>${scaleLabel(scale)}</button>`;
     }).join("");
-    return `<div class="pill-group"><span>${group}</span><div class="pills">${pills}</div></div>`;
+    return `<div class="pill-group"><span>${t(`group.${group}`)}</span><div class="pills">${pills}</div></div>`;
   }).join("");
 
   const degreeChips = ctx.scaleNotes.map((note) => {
@@ -418,26 +481,26 @@ function renderScale(ctx) {
   scaleSection.innerHTML = `
     <header class="section-head">
       <div>
-        <p class="eyebrow">Scale neck</p>
-        <h2>${ctx.scaleTitle}</h2>
-        <p>Every position of this scale on the ${spec.label.toLowerCase()}. Degrees stay the same color on every string.</p>
+        <p class="eyebrow">${t("scale.neck")}</p>
+        <h2>${scaleHeading(ctx)}</h2>
+        <p>${t("scale.blurb", { place: onInstrument(spec) })}</p>
       </div>
-      <button type="button" class="play" data-action="play-scale">Play scale</button>
+      <button type="button" class="play" data-action="play-scale">${t("scale.play")}</button>
     </header>
     <div class="scale-picker">${groups}</div>
     <div class="degree-row">${degreeChips}</div>
-    <p class="pattern">${ctx.pattern.join(" · ")}</p>
-    ${doubles ? `<p class="fine">Accidentals follow the key. A double sharp or double flat is the theoretical spelling of that degree.</p>` : ""}
+    <p class="pattern">${formatSteps(ctx.pattern)}</p>
+    ${doubles ? `<p class="fine">${t("scale.theory")}</p>` : ""}
     ${neckMarkup({
       neck: "scale",
       strings,
-      fretCount: FRET_COUNT,
+      fretCount: neckFretCount(),
       cell(pc, string, fret) {
         const note = ctx.scaleNotes.find((item) => item.pc === pc);
         if (!note) return { show: false };
         const midi = string.midi + fret;
         const octave = spelledOctave(midi, note.name);
-        const place = fret === 0 ? "open" : `fret ${fret}`;
+        const place = placeName(fret);
         const isRoot = note.degree === "R";
         const color = DEGREE_COLOR[note.degree] ?? "#d7d0c4";
         return {
@@ -445,7 +508,7 @@ function renderScale(ctx) {
           className: `bubble scale${isRoot ? " root" : ""}`,
           color,
           label: `<span class="deg">${note.degree}</span><span class="nm">${note.name}</span>`,
-          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${note.degree}, ${spoken(note.name)}${octave}, ${string.label} string, ${place}"`,
+          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${t("note.aria", { name: `${note.degree}, ${spoken(note.name)}`, octave, string: string.label, place, extra: "" })}"`,
         };
       },
     })}
@@ -460,7 +523,7 @@ function renderArpeggio(ctx) {
   const picks = ctx.chords.map((item, i) => {
     const color = colorForPc(item.pc);
     const pressed = i === ctx.chords.indexOf(chord);
-    return `<button type="button" class="chord" data-action="arp" data-index="${i}" aria-pressed="${pressed}" style="--c:${color};--ink:${ink(color)}" aria-label="${item.roman}, ${spoken(item.symbol)} arpeggio">
+    return `<button type="button" class="chord" data-action="arp" data-index="${i}" aria-pressed="${pressed}" style="--c:${color};--ink:${ink(color)}" aria-label="${t("arp.aria", { roman: item.roman, symbol: spoken(item.symbol) })}">
       <span class="rn">${item.roman}</span>
       <span class="sym">${item.symbol}</span>
     </button>`;
@@ -473,25 +536,25 @@ function renderArpeggio(ctx) {
   arpSection.innerHTML = `
     <header class="section-head">
       <div>
-        <p class="eyebrow">Arpeggio neck</p>
+        <p class="eyebrow">${t("arp.neck")}</p>
         <h2>${chord.symbol} · ${chord.roman}</h2>
-        <p>Every position of this triad from ${ctx.title} on the ${spec.label.toLowerCase()}. R is the chord root.</p>
+        <p>${t("arp.blurb", { title: keyTitle(ctx), place: onInstrument(spec) })}</p>
       </div>
-      <button type="button" class="play" data-action="play-arp">Play arpeggio</button>
+      <button type="button" class="play" data-action="play-arp">${t("arp.play")}</button>
     </header>
     <div class="chord-row">${picks}</div>
     <div class="degree-row">${degreeChips}</div>
-    <p class="pattern">${arp.pattern.join(" · ")}</p>
+    <p class="pattern">${formatSteps(arp.pattern)}</p>
     ${neckMarkup({
       neck: "arpeggio",
       strings,
-      fretCount: FRET_COUNT,
+      fretCount: neckFretCount(),
       cell(pc, string, fret) {
         const note = arp.notes.find((item) => item.pc === pc);
         if (!note) return { show: false };
         const midi = string.midi + fret;
         const octave = spelledOctave(midi, note.name);
-        const place = fret === 0 ? "open" : `fret ${fret}`;
+        const place = placeName(fret);
         const isRoot = note.degree === "R";
         const color = DEGREE_COLOR[note.degree] ?? "#d7d0c4";
         return {
@@ -499,7 +562,7 @@ function renderArpeggio(ctx) {
           className: `bubble scale${isRoot ? " root" : ""}`,
           color,
           label: `<span class="deg">${note.degree}</span><span class="nm">${note.name}</span>`,
-          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${note.degree}, ${spoken(note.name)}${octave}, ${string.label} string, ${place}"`,
+          attrs: `data-action="note" data-midi="${midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${t("note.aria", { name: `${note.degree}, ${spoken(note.name)}`, octave, string: string.label, place, extra: "" })}"`,
         };
       },
     })}
@@ -509,18 +572,14 @@ function renderArpeggio(ctx) {
 function renderChords(ctx) {
   const spec = instrumentSpec(state);
   const strings = orderedStrings(state);
-  const cards = ctx.chords.map((chord) => {
-    const voicing = chordVoicing(spec.strings, chord);
-    if (!voicing) return "";
+  const cards = ctx.chords.flatMap((chord) => {
+    const voicings = chordVoicings(spec.strings, chord, neckFretCount());
+    return voicings.map((voicing) => {
     const placed = new Map(voicing.notes.map((note) => [`${note.stringMidi}:${note.fret}`, note]));
     const muted = new Set(voicing.mutedMidis);
     const frets = [];
     for (let fret = voicing.min; fret <= voicing.max; fret += 1) frets.push(fret);
-    const where = voicing.min === 0
-      ? `Open ${voicing.name}`
-      : voicing.barre
-        ? `${voicing.name}, barre at fret ${voicing.min}`
-        : `${voicing.name}, starts at fret ${voicing.min}`;
+    const where = describeShape(voicing);
     const columns = fretColumns(frets);
     return `
       <article class="chord-diagram">
@@ -529,7 +588,7 @@ function renderChords(ctx) {
             <p class="chord-title">${chord.symbol} · ${chord.roman}</p>
             <p class="chord-shape">${where}</p>
           </div>
-          <button type="button" class="play" data-action="play-voicing" data-midis="${voicing.notes.map((note) => note.midi).join(",")}" aria-label="Play ${spoken(chord.symbol)} chord">Play chord</button>
+          <button type="button" class="play" data-action="play-voicing" data-midis="${voicing.notes.map((note) => note.midi).join(",")}" aria-label="${t("chord.playAria", { symbol: spoken(chord.symbol) })}">${t("chord.play")}</button>
         </header>
         ${neckMarkup({
           neck: "chord",
@@ -541,7 +600,7 @@ function renderChords(ctx) {
             const note = placed.get(`${string.midi}:${fret}`);
             if (!note) return { show: false, mute: muted.has(string.midi) };
             const octave = spelledOctave(note.midi, note.name);
-            const place = fret === 0 ? "open" : `fret ${fret}`;
+            const place = placeName(fret);
             const isRoot = note.degree === "R";
             const color = DEGREE_COLOR[note.degree] ?? "#d7d0c4";
             return {
@@ -549,20 +608,21 @@ function renderChords(ctx) {
               className: `bubble scale${isRoot ? " root" : ""}`,
               color,
               label: `<span class="deg">${note.degree}</span><span class="nm">${note.name}</span>`,
-              attrs: `data-action="note" data-midi="${note.midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${note.degree}, ${spoken(note.name)}${octave}, ${string.label} string, ${place}"`,
+              attrs: `data-action="note" data-midi="${note.midi}" data-pc="${pc}" data-fret="${fret}" data-degree="${note.degree}" data-name="${note.name}" data-root="${isRoot}" aria-label="${t("note.aria", { name: `${note.degree}, ${spoken(note.name)}`, octave, string: string.label, place, extra: "" })}"`,
             };
           },
         })}
       </article>
     `;
+    });
   }).join("");
 
   chordSection.innerHTML = `
     <header class="section-head">
       <div>
-        <p class="eyebrow">Chord necks</p>
-        <h2>Chords in ${ctx.title}</h2>
-        <p>A playable shape for each triad in the key, on the ${spec.label.toLowerCase()}. × marks a string that stays quiet.</p>
+        <p class="eyebrow">${t("chord.neck")}</p>
+        <h2>${t("chord.title", { title: keyTitle(ctx) })}</h2>
+        <p>${state.instrument === "bass" ? t("chord.blurbBass", { place: onInstrument(spec) }) : t("chord.blurb", { place: onInstrument(spec) })}</p>
       </div>
     </header>
     <div class="chord-list">${cards}</div>
@@ -574,15 +634,24 @@ function fretColumns(frets) {
   return `64px ${tracks.join(" ")}`;
 }
 
+function defaultColumns(fretNums) {
+  const stretch = fretNums.length <= 13;
+  const tracks = fretNums.map((fret, index) => {
+    if (index === 0 && fret === 0) return stretch ? "minmax(76px, 1.15fr)" : "72px";
+    return stretch ? "minmax(58px, 1fr)" : "58px";
+  });
+  return `64px ${tracks.join(" ")}`;
+}
+
 function neckMarkup({ neck, className = "", strings, fretCount = FRET_COUNT, frets, columns, cell }) {
   const fretNums = frets ?? Array.from({ length: fretCount + 1 }, (_, index) => index);
-  const nums = [`<span class="num corner">${fretNums[0] === 0 ? "Fret" : `Fret ${fretNums[0]}`}</span>`];
+  const nums = [`<span class="num corner">${fretNums[0] === 0 ? t("fret.corner") : t("fret.number", { fret: fretNums[0] })}</span>`];
   fretNums.forEach((fret) => {
     if (fret === 0) {
-      nums.push(`<span class="num open-num">Open</span>`);
+      nums.push(`<span class="num open-num">${t("fret.open")}</span>`);
       return;
     }
-    const inlay = INLAY_FRETS.includes(fret) ? " inlay-num" : "";
+    const inlay = isInlay(fret) ? " inlay-num" : "";
     nums.push(`<span class="num${inlay}">${fret}</span>`);
   });
 
@@ -604,7 +673,7 @@ function neckMarkup({ neck, className = "", strings, fretCount = FRET_COUNT, fre
       const marker = view.show
         ? `<button type="button" class="${view.className}" style="--c:${view.color};--ink:${ink(view.color)}" ${view.attrs}>${view.label}</button>`
         : view.mute && fret === fretNums[0]
-          ? `<span class="mute" role="img" aria-label="Muted string">×</span>`
+          ? `<span class="mute" role="img" aria-label="${t("chord.mute")}">×</span>`
           : "";
       const dot = dotHosts.has(`${stringIndex}:${fret}`) ? `<span class="inlay"></span>` : "";
       cells.push(`<div class="cell${open}" style="--gauge:${gauge}" data-string="${string.label}" data-fret="${fret}">${dot}${marker}</div>`);
@@ -612,12 +681,13 @@ function neckMarkup({ neck, className = "", strings, fretCount = FRET_COUNT, fre
     return cells.join("");
   }).join("");
 
-  const trackStyle = columns ? ` style="grid-template-columns:${columns}"` : "";
+  const tracks = columns ?? defaultColumns(fretNums);
+  const trackStyle = ` style="grid-template-columns:${tracks}"`;
   const extra = className ? ` ${className}` : "";
   return `
     <div class="neck-scroll${extra}" data-neck="${neck}">
       <div class="nums"${trackStyle}>${nums.join("")}</div>
-      <div class="board" style="--strings:${strings.length}${columns ? `;grid-template-columns:${columns}` : ""}">
+      <div class="board" style="--strings:${strings.length};grid-template-columns:${tracks}">
         ${rows}
       </div>
     </div>
@@ -637,70 +707,9 @@ function playMidis(midis, mode) {
   player.play(midis, mode, state.instrument);
 }
 
-function segmentAngles(index) {
-  const center = -90 + (index - state.index) * 30;
-  const half = 14.35;
-  const deg = Math.PI / 180;
-  return [(center - half) * deg, (center + half) * deg];
-}
-
-function polar(cx, cy, radius, angle) {
-  return [cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)];
-}
-
-function sectorPath(cx, cy, rInner, rOuter, a0, a1) {
-  const [x0, y0] = polar(cx, cy, rOuter, a0);
-  const [x1, y1] = polar(cx, cy, rOuter, a1);
-  const [x2, y2] = polar(cx, cy, rInner, a1);
-  const [x3, y3] = polar(cx, cy, rInner, a0);
-  const large = a1 - a0 > Math.PI ? 1 : 0;
-  return `M ${x0} ${y0} A ${rOuter} ${rOuter} 0 ${large} 1 ${x1} ${y1} L ${x2} ${y2} A ${rInner} ${rInner} 0 ${large} 0 ${x3} ${y3} Z`;
-}
-
-function segmentPath(cx, cy, rInner, rOuter, a0, a1, meta) {
-  const path = svgEl("path", {
-    d: sectorPath(cx, cy, rInner, rOuter, a0, a1),
-    class: `seg${meta.inKey ? "" : " dim"}${meta.selected ? " selected" : ""}`,
-    fill: meta.color,
-    "data-action": "key",
-    "data-index": meta.index,
-    "data-quality": meta.quality,
-    "data-selected": meta.selected ? "true" : "false",
-    role: "button",
-    tabindex: meta.selected ? "0" : "-1",
-    "aria-pressed": meta.selected ? "true" : "false",
-    "aria-label": meta.label,
-  });
-  return path;
-}
-
-function ringPath(cx, cy, rInner, rOuter, a0, a1) {
-  return svgEl("path", {
-    d: sectorPath(cx, cy, rInner + 3, rOuter - 3, a0 + 0.01, a1 - 0.01),
-    class: "seg-ring",
-  });
-}
-
-function hubText(x, y, value, className) {
-  const text = svgEl("text", { x, y, class: className, "text-anchor": "middle" });
-  text.textContent = value;
-  return text;
-}
-
-function svgEl(name, attrs) {
-  const node = document.createElementNS(SVG_NS, name);
-  Object.entries(attrs).forEach(([key, value]) => {
-    if (value != null) node.setAttribute(key, String(value));
-  });
-  return node;
-}
-
-function spoken(name) {
-  return name
-    .replaceAll("𝄪", " double sharp")
-    .replaceAll("𝄫", " double flat")
-    .replaceAll("♯", " sharp")
-    .replaceAll("♭", " flat");
-}
+onLang(() => {
+  render();
+  metronome.refresh();
+});
 
 render();

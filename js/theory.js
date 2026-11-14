@@ -35,7 +35,14 @@ export const CIRCLE = [
 ];
 
 export const FRET_COUNT = 12;
+export const BASS_FRET_COUNT = 24;
 export const INLAY_FRETS = [3, 5, 7, 9, 12];
+const SINGLE_INLAYS = new Set([3, 5, 7, 9, 15, 17, 19, 21]);
+const DOUBLE_INLAYS = new Set([12, 24]);
+
+export function isInlay(fret) {
+  return SINGLE_INLAYS.has(fret) || DOUBLE_INLAYS.has(fret);
+}
 
 export const SCALES = [
   {
@@ -391,33 +398,37 @@ function alignToAnchor(strings, anchorMidi, shapeIntervals) {
   return intervals;
 }
 
-function realizeVoicing(strings, rootPc, name, intervals) {
+function realizeVoicing(strings, rootPc, name, intervals, maxFret = FRET_COUNT) {
   const rootIndex = intervals.findIndex((interval) => interval === 0);
-  if (rootIndex < 0) return null;
+  if (rootIndex < 0) return [];
   const rootOpen = strings[rootIndex].midi;
   const baseFret = (rootPc - (rootOpen % 12) + 12) % 12;
   const candidates = [];
-  [baseFret, baseFret + 12].forEach((rootFret) => {
-    if (rootFret > 12) return;
-    const rootMidi = rootOpen + rootFret;
-    const notes = [];
-    for (let i = 0; i < intervals.length; i += 1) {
-      const interval = intervals[i];
-      if (interval == null) {
-        notes.push({ mute: true, stringMidi: strings[i].midi });
-        continue;
-      }
-      const midi = rootMidi + interval;
-      const fret = midi - strings[i].midi;
-      if (fret < 0 || fret > 12) return;
-      notes.push({ mute: false, stringMidi: strings[i].midi, fret, midi, interval });
-    }
-    const sounded = notes.filter((note) => !note.mute);
+  for (let rootFret = baseFret; rootFret <= maxFret; rootFret += 12) {
+    const placed = placeShape(strings, rootOpen + rootFret, intervals, maxFret);
+    if (!placed) continue;
+    const sounded = placed.filter((note) => !note.mute);
     const min = Math.min(...sounded.map((note) => note.fret));
     const max = Math.max(...sounded.map((note) => note.fret));
-    candidates.push({ name, notes, min, max, span: max - min });
-  });
+    candidates.push({ name, notes: placed, min, max, span: max - min });
+  }
   return candidates;
+}
+
+function placeShape(strings, rootMidi, intervals, maxFret) {
+  const notes = [];
+  for (let i = 0; i < intervals.length; i += 1) {
+    const interval = intervals[i];
+    if (interval == null) {
+      notes.push({ mute: true, stringMidi: strings[i].midi });
+      continue;
+    }
+    const midi = rootMidi + interval;
+    const fret = midi - strings[i].midi;
+    if (fret < 0 || fret > maxFret) return null;
+    notes.push({ mute: false, stringMidi: strings[i].midi, fret, midi, interval });
+  }
+  return notes;
 }
 
 function voicingRank(voicing) {
@@ -440,33 +451,55 @@ function preferVoicing(current, next) {
   return current;
 }
 
-export function chordVoicing(strings, chord) {
+function shapeTemplates(strings, quality) {
   const guitar = strings.length === 6 && strings[0].midi === 40;
-  const templates = guitar
-    ? GUITAR_VOICINGS[chord.quality] ?? GUITAR_VOICINGS.dim
-    : (BASS_VOICINGS[chord.quality] ?? BASS_VOICINGS.dim).map((shape) => ({
-      name: shape.name,
-      intervals: alignToAnchor(strings, shape.anchor, shape.intervals),
-    })).filter((shape) => shape.intervals);
+  if (guitar) return GUITAR_VOICINGS[quality] ?? GUITAR_VOICINGS.dim;
+  return (BASS_VOICINGS[quality] ?? BASS_VOICINGS.dim).map((shape) => ({
+    name: shape.name,
+    intervals: alignToAnchor(strings, shape.anchor, shape.intervals),
+  })).filter((shape) => shape.intervals);
+}
+
+function spellVoicing(candidate, chord) {
   const arp = arpeggioFor(chord);
-  const best = templates.reduce((chosen, template) => {
-    const found = realizeVoicing(strings, chord.pc, template.name, template.intervals);
-    return (found ?? []).reduce((pick, candidate) => (pick ? preferVoicing(pick, candidate) : candidate), chosen);
-  }, null);
-  if (!best) return null;
-  const notes = best.notes.filter((note) => !note.mute).map((note) => {
+  const notes = candidate.notes.filter((note) => !note.mute).map((note) => {
     const spelled = arp.notes.find((item) => item.pc === ((note.midi % 12) + 12) % 12);
     return { ...note, degree: spelled?.degree ?? "R", name: spelled?.name ?? chord.name };
   });
-  const atNut = notes.filter((note) => note.fret === best.min);
+  const atNut = notes.filter((note) => note.fret === candidate.min);
   return {
-    name: best.name,
-    min: best.min,
-    max: best.max,
-    barre: best.min > 0 && atNut.length >= 2,
+    name: candidate.name,
+    min: candidate.min,
+    max: candidate.max,
+    barre: candidate.min > 0 && atNut.length >= 2,
     notes,
-    mutedMidis: best.notes.filter((note) => note.mute).map((note) => note.stringMidi),
+    mutedMidis: candidate.notes.filter((note) => note.mute).map((note) => note.stringMidi),
   };
+}
+
+export function chordVoicings(strings, chord, maxFret = FRET_COUNT) {
+  const templates = shapeTemplates(strings, chord.quality);
+  const found = templates.flatMap((template) => (
+    realizeVoicing(strings, chord.pc, template.name, template.intervals, maxFret)
+  ));
+  const seen = new Set();
+  const unique = found.filter((candidate) => {
+    const key = candidate.notes.map((note) => (note.mute ? "x" : note.fret)).join(",");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  if (maxFret <= FRET_COUNT) {
+    const best = unique.reduce((chosen, candidate) => (chosen ? preferVoicing(chosen, candidate) : candidate), null);
+    return best ? [spellVoicing(best, chord)] : [];
+  }
+  return unique
+    .sort((left, right) => left.min - right.min || left.max - right.max)
+    .map((candidate) => spellVoicing(candidate, chord));
+}
+
+export function chordVoicing(strings, chord, maxFret = FRET_COUNT) {
+  return chordVoicings(strings, chord, maxFret)[0] ?? null;
 }
 
 function chordSymbol(name, quality) {
@@ -585,8 +618,8 @@ export function gaugeFor(midi, strings) {
 }
 
 export function inlaySpans(stringCount, fret) {
-  if (!INLAY_FRETS.includes(fret)) return [];
-  if (fret === 12) {
+  if (!isInlay(fret)) return [];
+  if (DOUBLE_INLAYS.has(fret)) {
     if (stringCount === 4) return [[1, 3], [3, 5]];
     if (stringCount === 5) return [[1, 3], [4, 6]];
     return [[2, 4], [4, 6]];
